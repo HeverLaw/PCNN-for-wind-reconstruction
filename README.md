@@ -4,6 +4,8 @@
 
 This project is a PCNN-based method for wind reconstruction.
 
+![overview of the reconstruction](./images/overview.png)
+
 ## Requirements
 - Python 3.6+
 - Pytorch 1.0+
@@ -17,7 +19,7 @@ pip install -r requirements.txt
 ## Usage
 
 ### Data preparation
-- To get your training data and evaluation data, use util/split_data_for_144.py to split the data for obtaining training data and eval data.
+- To get your training data and evaluation data, use util/split_data_for_144.py to split the data and mask for obtaining training data and evaluation data, in which you should prepare the win speed data and the mask of reconstruction dataset.
 - Because every wind map should has its own mask, so the size of train_data.h5 and train_mask.h5 should have the same shape.
 - Put the data in the fold in ./datasets/win_speed, including train_data.h5, train_mask.h5,  eval_data.h5, eval_mask.h5, test_data.h5, test_mask.h5
 - Use util/data_analyze.py to get the min value and max value.
@@ -28,13 +30,13 @@ In pytorch, it often uses to_tensor to transform image (min value is 0, and max 
 
 We also used z-score, so you can specify your MEAN and STD in **opt.py.**
 
-For constructing your own dataloader, you should use minmaxscaler and transforms.Normalize(mean=opt.MEAN, std=opt.STD) in your dataloader. And for output, you should use the un-normalization function to get the exact output.
+For constructing your own dataloader, you should use minmaxscaler and transforms.Normalize(mean=opt.MEAN, std=opt.STD) in your dataloader. And for output, you should use the un-minmax and un-normalization function to get the exact output.
 
-```
-from util.image import UnNormalization
+```python
+from util.image import UnMinMaxUnNormalization
 
-unnormalization = UnNormalization(device)
-output = unnormalization(output)
+unminmax_unnormalization = UnMinMaxUnNormalization(device)
+output = unminmax_unnormalization(output)
 ```
 
 ### Command to run
