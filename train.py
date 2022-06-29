@@ -19,33 +19,11 @@ import torch.optim.lr_scheduler as lr_scheduler
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
-class InfiniteSampler(data.sampler.Sampler):
-    def __init__(self, num_samples):
-        self.num_samples = num_samples
-
-    def __iter__(self):
-        return iter(self.loop())
-
-    def __len__(self):
-        return 2 ** 31
-
-    def loop(self):
-        i = 0
-        order = np.random.permutation(self.num_samples)
-        while True:
-            yield order[i]
-            i += 1
-            if i >= self.num_samples:
-                np.random.seed()
-                order = np.random.permutation(self.num_samples)
-                i = 0
-
-
 parser = argparse.ArgumentParser()
 # training options
-parser.add_argument('--root', type=str, default='/data/liuhaofeng/Dataset/win_speed/72x72/')
-parser.add_argument('--mask_root', type=str, default='/data/liuhaofeng/Dataset/win_speed/72x72/')
-parser.add_argument('--model_name', type=str, default='win_speed2')
+parser.add_argument('--root', type=str, default='/dataset/win_speed/72x72/')
+parser.add_argument('--mask_root', type=str, default='/data/win_speed/72x72/')
+parser.add_argument('--model_name', type=str, default='win_speed_train_project1')
 parser.add_argument('--lr', type=float, default=2e-4)
 parser.add_argument('--lr_finetune', type=float, default=5e-5)
 parser.add_argument('--max_iter', type=int, default=300000)
@@ -87,14 +65,15 @@ if not os.path.exists(log_dir):
 
 writer = SummaryWriter(log_dir=log_dir)
 
-# 注意，使用minmax和normalize
+# NOTE: remember to use minmax and normalize, the minmax scaler is encoded in WindDataset
 img_transform = transforms.Compose(
     [transforms.Resize(size=size),
      transforms.Normalize(mean=opt.MEAN, std=opt.STD)])
 mask_transform = transforms.Compose(
     [transforms.Resize(size=size), transforms.ToTensor()])
 
-dataset_train = WindDataset(args.root, args.mask_root, img_transform, mask_transform, 'train', image_size=args.image_size, random_mask= True)
+# NOTE: the minmax scaler is encoded in WindDataset
+dataset_train = WindDataset(args.root, args.mask_root, img_transform, mask_transform, 'train', image_size=args.image_size, random_mask=args.random_mask)
 dataset_eval = WindDataset(args.root, args.mask_root, img_transform, mask_transform, 'eval', image_size=args.image_size)
 dataset_test = WindDataset(args.root, args.mask_root, img_transform, mask_transform, 'test', image_size=args.image_size)
 
@@ -172,11 +151,11 @@ while iter < args.max_iter:
                      '{:s}/images/test_{:d}.jpg'.format(save_dir, iter + 1))
             model.train()
 
-        # 计数
+        # counter
         iter += 1
         if iter > args.max_iter:
             break
-        # 验证
+        # validation
         if (iter+1) % 10000 == 0:
             print('learning rate ', scheduler.get_lr())
             print('evaluating eval dataset')

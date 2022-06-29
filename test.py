@@ -10,7 +10,7 @@ import numpy as np
 from wind_dataset import WindDataset
 from net import PConvUNet
 from util.io import load_ckpt
-from util.image import unnormalize, UnNormalization
+from util.image import UnMinMaxUnNormalization
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -20,15 +20,13 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 def test_net(model, test_dataloader, device, args,
              save_dir=None, vis=False, save_tensor=False, no_compute_loss=True):
     model.eval()
-    unnormalization = UnNormalization(device)
+    unminmax_unnormalization = UnMinMaxUnNormalization(device)
     with torch.no_grad():
         output_list = []
         gt_list = []
         mask_list = []
         for i, (image, mask, transform_gt, gt) in enumerate(test_dataloader):
-            # 计算个数
             output, _ = model(image.to(device), mask.to(device))
-
 
             # if vis:
             #     output = output.to(torch.device('cpu'))
@@ -38,9 +36,8 @@ def test_net(model, test_dataloader, device, args,
             #                    unnormalize(output_comp), unnormalize(gt)), dim=0))
             #     save_image(grid, os.path.join(save_dir, str(i) + '.png'))
             # gt = unnormalization(gt.to(device))
-            output = unnormalization(output)
+            output = unminmax_unnormalization(output)
             output_list.append(output.to('cpu'))
-            # gt_list.append(gt.to('cpu'))
             gt_list.append(gt)
 
             mask_list.append(mask)
@@ -55,6 +52,7 @@ def test_net(model, test_dataloader, device, args,
         mask_np = mask_tensor.numpy()
 
         if not no_compute_loss:
+            # TODO: to modify your own evaluation metrics
             l1_loss_in_mask = compute_loss(output_tensor, gt_tensor, mask_tensor)
             print('l1_loss_in_mask', l1_loss_in_mask)
             correlation_all, rmse_all = compute_all(output_np, gt_np)
@@ -72,9 +70,10 @@ def test_net(model, test_dataloader, device, args,
 
 def compute_loss(output, gt, mask):
     l1 = nn.L1Loss(reduction='sum')
-    # mask是保留的部分
+    # In mask, the value equal to 1 is retained and can be seen by the model
+    # So, in evaluation phase, we should compute the unmask area.
     unmask = 1 - mask
-    # 计算没有被挡的部分的正确率
+    # Compute the loss of the unmask area.
     l1_loss = l1(output * unmask, gt * unmask)
     mask_count = mask.shape[0] * mask.shape[1] * mask.shape[2] * mask.shape[3] - mask.count_nonzero()
     return l1_loss / mask_count
@@ -82,20 +81,17 @@ def compute_loss(output, gt, mask):
     # sum_mask_count += mask_count
 
 
-# 计算总体时间序列的相关性和均方根误差
+# Calculate the correlation and root mean square error of the total time series
 def compute_all(output, gt):
-    n = gt.shape[0]  # 得到该矩阵有几张image
-    # for i in range(n):  # 读取每张图片
+    n = gt.shape[0]  # image number
     x = gt.reshape([n, -1]).mean(axis=1)
     y = output.reshape([n, -1]).mean(axis=1)
-        # x[i] = np.mean(gt[i, :, :, :])  # 得到原始数据 该月 所有网格的平均值
-        # y[i] = np.mean(output[i, :, :, :])  # 得到重构数据 该月 所有网格的平均值
     correlation_all = np.corrcoef(x, y)[0, 1]
     rmse_all = np.sqrt(np.mean(np.power((x - y), 2)))
     return correlation_all, rmse_all
 
 
-# 计算每个网格上时间序列的相关性和均方根误差 的 平均值
+# Calculate the average value of correlation and root mean square error of time series on each grid
 def compute_eachgrid(output, gt):
     output_t = output.transpose(2,3,0,1).reshape(output.shape[2]*output.shape[3], -1)
     gt_t = gt.transpose(2,3,0,1).reshape(gt.shape[2]*gt.shape[3], -1)
@@ -104,17 +100,7 @@ def compute_eachgrid(output, gt):
     correlation_grid_m = np.corrcoef(x, y)[0,1]
     rmse_grid_m = np.sqrt(np.mean(np.power((x - y), 2)))
     return correlation_grid_m, rmse_grid_m
-    # n = gt.shape[0]  # 得到该矩阵有几张image
-    # rmse = np.zeros([gt.shape[2], gt.shape[3]])  # 生成和数据行列数相同的矩阵
-    # correlation = np.zeros([gt.shape[2], gt.shape[3]])  # 生成和数据行列数相同的矩阵
-    # for i in range(gt.shape[2]):
-    #     for j in range(gt.shape[3]):
-    #         x = output[:, :, i, j].reshape(n, 1)
-    #         y = gt[:, :, i, j].reshape(n, 1)
-    #         rmse[i, j] = np.sqrt(np.mean(np.power((x - y), 2)))
-    #         correlation[i, j] = np.corrcoef(x, y)[0,1]
-    # correlation_grid_m = np.mean(correlation)
-    # rmse_grid_m = np.mean(rmse)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -135,6 +121,8 @@ if __name__ == '__main__':
     parser.add_argument('--snapshot', type=str, default='300000')
     parser.add_argument('--image_size', type=int, default=72)
     parser.add_argument('--random_mask', action='store_true')
+    parser.add_argument('--use_cpu', action='store_true')
+
 
     args = parser.parse_args()
     snapshot = os.path.join('snapshots', args.model_name, 'ckpt', args.iter + '.pth')
@@ -143,8 +131,12 @@ if __name__ == '__main__':
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
 
-    torch.backends.cudnn.benchmark = True
-    device = torch.device('cuda:{}'.format(args.gpu_id))
+    if args.use_cpu:
+        torch.backends.cudnn.benchmark = False
+        device = torch.device('cpu')
+    else:
+        torch.backends.cudnn.benchmark = True
+        device = torch.device('cuda:{}'.format(args.gpu_id))
 
     size = (args.image_size, args.image_size)
     img_transform = transforms.Compose(
